@@ -3,14 +3,15 @@ from sqlalchemy import select
 from uuid import UUID
 from datetime import datetime
 from decimal import Decimal
-
 from app.models.payment import Payment, PaymentStatus
 from app.schemas.payment import PaymentCreateRequest
+from app.services.outbox_actions import OutboxService
 
 
 class PaymentService:
     def __init__(self, session: AsyncSession):
         self.session = session
+        self.outbox_service = OutboxService(session)
 
     async def create_payment(
             self,
@@ -29,12 +30,32 @@ class PaymentService:
             amount=payment_data.amount,
             currency=payment_data.currency.value,
             description=payment_data.description,
-            metadata=payment_data.metadata or {},
+            meta_data=payment_data.meta_data or {},
             webhook_url=str(payment_data.webhook_url),
             status=PaymentStatus.PENDING
         )
 
         self.session.add(payment)
+        await self.session.flush()  # Чтобы получить payment.id
+
+        # Создаём событие в outbox
+        event_payload = {
+            "payment_id": str(payment.id),
+            "amount": str(payment.amount),
+            "currency": payment.currency,
+            "description": payment.description,
+            "meta_data": payment.meta_data,
+            "webhook_url": payment.webhook_url,
+            "idempotency_key": payment.idempotency_key,
+            "created_at": payment.created_at.isoformat() if payment.created_at else None
+        }
+
+        await self.outbox_service.create_event(
+            event_type="payment.created",
+            aggregate_id=payment.id,
+            payload=event_payload
+        )
+
         await self.session.commit()
         await self.session.refresh(payment)
 
