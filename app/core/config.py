@@ -9,6 +9,9 @@ class Settings(BaseSettings):
 
     api_key: str = "test-api-key-123"
 
+    outbox_poll_interval: int = 5
+    outbox_batch_size: int = 100
+
     class Config:
         env_file = ".env"
 
